@@ -5,54 +5,54 @@ import folium
 from streamlit_folium import st_folium
 import os
 
-# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Rutas Pavías", page_icon="🌲", layout="centered")
+# --- 1. CONFIGURACIÓN VISUAL ---
+st.set_page_config(
+    page_title="Pavías Senderismo", 
+    page_icon="⛰️", 
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
-# --- 2. FUNCIÓN PARA BUSCAR RUTAS (CON DIAGNÓSTICO) ---
+# Estilos CSS personalizados para que parezca más "App"
+st.markdown("""
+<style>
+    .big-font { font-size:20px !important; }
+    div.stButton > button:first-child {
+        background-color: #4CAF50;
+        color: white;
+        width: 100%;
+        border-radius: 10px;
+        font-weight: bold;
+    }
+    .reportview-container { background: #f0f2f6 }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 2. FUNCIONES (MOTOR) ---
 def obtener_listado_rutas(carpeta="rutas"):
-    """
-    Busca archivos .gpx en la carpeta especificada.
-    Si no encuentra la carpeta, avisa al usuario mostrando qué hay en el directorio.
-    """
-    rutas_encontradas = []
-    
-    # Verificamos si la carpeta existe
     if not os.path.exists(carpeta):
-        st.error(f"❌ Error: No encuentro la carpeta llamada '{carpeta}'.")
-        st.warning(f"📂 Lo que veo en el directorio principal es: {os.listdir('.')}")
-        st.info("Pista: Asegúrate de que en GitHub la carpeta se llame exactamente 'rutas' (en minúsculas).")
         return []
-
-    # Leemos los archivos dentro de la carpeta
     archivos = os.listdir(carpeta)
-    
-    # Filtramos solo los que terminan en .gpx
+    rutas_encontradas = []
     for archivo in archivos:
         if archivo.lower().endswith(".gpx"):
-            # Creamos un nombre bonito quitando .gpx y guiones bajos
             nombre_bonito = archivo.replace(".gpx", "").replace("_", " ").title()
-            
             rutas_encontradas.append({
                 "nombre": nombre_bonito,
                 "path": os.path.join(carpeta, archivo),
                 "archivo_real": archivo
             })
-            
     return rutas_encontradas
 
-# --- 3. FUNCIÓN PARA LEER EL GPX (MATEMÁTICAS) ---
 def cargar_datos_gpx(ruta_archivo):
-    """Lee el archivo GPX y extrae mapa y perfil de elevación."""
     try:
         gpx_file = open(ruta_archivo, 'r')
         gpx = gpxpy.parse(gpx_file)
         
-        # Datos generales
         distancia_km = gpx.length_2d() / 1000
         datos_altura = gpx.get_uphill_downhill()
         desnivel_positivo = datos_altura.uphill
         
-        # Extraer puntos para el mapa y la gráfica
         datos_grafica = []
         puntos_mapa = []
         distancia_acumulada = 0
@@ -61,14 +61,9 @@ def cargar_datos_gpx(ruta_archivo):
         for track in gpx.tracks:
             for segment in track.segments:
                 for point in segment.points:
-                    # Guardamos coordenadas para el mapa (Latitud, Longitud)
                     puntos_mapa.append([point.latitude, point.longitude])
-                    
-                    # Calculamos distancia acumulada para la gráfica X
                     if prev_point:
                         distancia_acumulada += point.distance_2d(prev_point)
-                    
-                    # Guardamos datos para la gráfica
                     datos_grafica.append({
                         "Distancia (km)": distancia_acumulada / 1000,
                         "Altitud (m)": point.elevation
@@ -76,73 +71,116 @@ def cargar_datos_gpx(ruta_archivo):
                     prev_point = point
                     
         df = pd.DataFrame(datos_grafica)
-        return df, puntos_mapa, distancia_km, desnivel_positivo
+        return df, puntos_mapa, distancia_km, desnivel_positivo, gpx.to_xml()
         
     except Exception as e:
-        st.error(f"Error leyendo el archivo {ruta_archivo}: {e}")
-        return None, None, 0, 0
+        return None, None, 0, 0, None
 
-# --- 4. INTERFAZ DE USUARIO (LO QUE SE VE) ---
-st.title("🌲 Senderismo en Pavías")
-st.write("Descubre la Sierra de Espadán a través de sus sendas.")
+# --- 3. INTERFAZ PRINCIPAL ---
 
-# --- MENÚ LATERAL ---
-st.sidebar.header("🎒 Tus Rutas")
+# Cabecera con imagen (puedes poner una URL de una foto de Pavías real aquí)
+st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Pav%C3%ADas._Castell%C3%B3n.jpg/1024px-Pav%C3%ADas._Castell%C3%B3n.jpg", use_column_width=True)
+st.title("⛰️ Rutas de Pavías")
+st.markdown("**Descubre la Sierra de Espadán.** Selecciona una ruta, explora el mapa y descarga el track para tu GPS.")
 
-# Llamamos a la función que busca los archivos
+# --- BARRA LATERAL ---
+st.sidebar.header("🧭 Explorador")
 mis_rutas = obtener_listado_rutas("rutas")
 
 if not mis_rutas:
-    st.sidebar.warning("No hay rutas cargadas.")
-    st.info("👆 Si ves el error de carpeta arriba, corrígelo en GitHub.")
+    st.error("No se encontraron rutas. Sube archivos .gpx a la carpeta 'rutas'.")
 else:
-    # Selector de rutas
     nombres_rutas = [r["nombre"] for r in mis_rutas]
-    seleccion = st.sidebar.selectbox("Elige una ruta:", nombres_rutas)
-    
-    # Encontramos la ruta seleccionada
+    seleccion = st.sidebar.selectbox("Elige tu aventura:", nombres_rutas)
     ruta_elegida = next(r for r in mis_rutas if r["nombre"] == seleccion)
     
-    # --- MOSTRAR LA RUTA ---
-    st.header(f"📍 {ruta_elegida['nombre']}")
-    
-    # Cargamos y procesamos el GPX
-    df, puntos, dist, desnivel = cargar_datos_gpx(ruta_elegida["path"])
+    # Procesar datos
+    df, puntos, dist, desnivel, xml_data = cargar_datos_gpx(ruta_elegida["path"])
     
     if df is not None and not df.empty:
-        # A. TARJETAS DE INFORMACIÓN
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Distancia", f"{dist:.2f} km")
-        c1.metric("Desnivel +", f"{int(desnivel)} m")
+        st.header(f"📍 {ruta_elegida['nombre']}")
         
-        # Cálculo automático de dificultad estimado
-        if desnivel > 600 or dist > 15:
-            dificultad = "Alta 🔴"
-        elif desnivel > 300:
-            dificultad = "Media 🟡"
-        else:
-            dificultad = "Baja 🟢"
-        c3.metric("Dificultad", dificultad)
+        # --- SISTEMA DE PESTAÑAS (Ideal para móviles) ---
+        tab1, tab2, tab3 = st.tabs(["📊 Datos y Descarga", "🗺️ Mapa Interactivo", "ℹ️ Info y Seguridad"])
         
-        # B. MAPA INTERACTIVO
-        st.subheader("🗺️ Mapa del recorrido")
-        if puntos:
-            # Centramos el mapa en el punto medio de la ruta
-            mid_point = puntos[len(puntos)//2]
-            m = folium.Map(location=mid_point, zoom_start=13)
+        with tab1:
+            # 1. TARJETAS DE DATOS
+            col1, col2, col3 = st.columns(3)
+            col1.metric("📏 Distancia", f"{dist:.2f} km")
+            col1.metric("📈 Desnivel +", f"{int(desnivel)} m")
             
-            # Dibujamos la línea roja
-            folium.PolyLine(puntos, color="#FF4B4B", weight=4, opacity=0.8).add_to(m)
+            # Lógica de dificultad visual
+            if desnivel > 600 or dist > 15:
+                dif_texto = "Difícil"
+                dif_color = "red"
+            elif desnivel > 300:
+                dif_texto = "Media"
+                dif_color = "orange"
+            else:
+                dif_texto = "Fácil"
+                dif_color = "green"
             
-            # Marcadores Inicio (Verde) y Fin (Negro)
-            folium.Marker(puntos[0], popup="Inicio", icon=folium.Icon(color="green", icon="play")).add_to(m)
-            folium.Marker(puntos[-1], popup="Fin", icon=folium.Icon(color="black", icon="stop")).add_to(m)
+            col3.markdown(f"**Dificultad**<br><span style='color:{dif_color}; font-size:24px; font-weight:bold'>{dif_texto}</span>", unsafe_allow_html=True)
             
-            st_folium(m, width=700, height=500)
+            st.divider()
             
-        # C. GRÁFICA DE ELEVACIÓN
-        st.subheader("📈 Perfil de Altura")
-        st.area_chart(df, x="Distancia (km)", y="Altitud (m)", color=["#FF4B4B"])
-        
+            # 2. BOTÓN DE DESCARGA (LO MÁS IMPORTANTE)
+            st.subheader("📲 Llevate la ruta")
+            st.write("Descarga el archivo GPX para usarlo en tu reloj GPS, Wikiloc o móvil.")
+            
+            st.download_button(
+                label=f"⬇️ DESCARGAR GPX ({ruta_elegida['nombre']})",
+                data=xml_data,
+                file_name=ruta_elegida['archivo_real'],
+                mime="application/gpx+xml"
+            )
+
+            st.divider()
+            st.subheader("📉 Perfil de Altimetría")
+            st.area_chart(df, x="Distancia (km)", y="Altitud (m)", color=["#4CAF50"])
+
+        with tab2:
+            st.write("Usa el botón de capas (arriba derecha del mapa) para ver satélite.")
+            if puntos:
+                mid_point = puntos[len(puntos)//2]
+                
+                # Usamos OpenTopoMap por defecto que es mejor para montaña
+                m = folium.Map(location=mid_point, zoom_start=13, tiles="OpenTopoMap")
+                
+                # Añadimos capa de satélite opcional
+                folium.TileLayer(
+                    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    attr='Esri',
+                    name='Satélite',
+                    overlay=False,
+                    control=True
+                ).add_to(m)
+
+                # Línea de ruta
+                folium.PolyLine(puntos, color="red", weight=4, opacity=0.8, tooltip=ruta_elegida['nombre']).add_to(m)
+                
+                # Iconos chulos
+                folium.Marker(puntos[0], popup="Inicio", icon=folium.Icon(color="green", icon="play", prefix='fa')).add_to(m)
+                folium.Marker(puntos[-1], popup="Fin", icon=folium.Icon(color="black", icon="flag", prefix='fa')).add_to(m)
+                
+                # Control de capas
+                folium.LayerControl().add_to(m)
+                
+                st_folium(m, width=700, height=500)
+
+        with tab3:
+            st.info("ℹ️ Recuerda que estás en el Parque Natural de la Sierra de Espadán.")
+            st.markdown("""
+            **Consejos de seguridad:**
+            - 💧 **Agua:** No hay muchas fuentes potables en las cimas. Lleva al menos 1.5L.
+            - 📱 **Cobertura:** Puede fallar en los barrancos. **Descarga el GPX antes de salir.**
+            - 🐗 **Fauna:** Respeta a los animales y no salgas de las sendas marcadas.
+            - 🔥 **Fuego:** Totalmente prohibido hacer fuego.
+            
+            **Teléfonos de interés:**
+            - Emergencias: 112
+            - Ayuntamiento Pavías: [Añadir teléfono]
+            """)
+
     else:
-        st.warning("El archivo GPX parece estar vacío o dañado.")
+        st.warning("Error al leer el archivo. Comprueba que el GPX es válido.")
